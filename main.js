@@ -26,7 +26,7 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 
 // import { floor } from 'mathjs';
 
-let appName = 'StepwiseAdaptiveFresnelLens';
+let appName = 'StepwiseAdaptiveFL';
 let appDescription = 'the premier AR tool for simulating stepwise adaptive Fresnel lenses';
 
 let qAFL = .1;	// the ratio of focal power and the angle between the two components (in radians)
