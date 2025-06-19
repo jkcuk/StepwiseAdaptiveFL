@@ -1,4 +1,3 @@
-
 // This code is based on three.js, which comes with the following license:
 //
 // The MIT License
@@ -14,6 +13,11 @@
 
 // The above copyright notice and this permission notice shall be included in
 // all copies or substantial portions of the Software.
+
+//
+// authors: Nathaniel Greenwood, Johannes Courtial
+//
+
 import * as THREE from 'three';
 
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
@@ -24,23 +28,21 @@ import { HTMLMesh } from 'three/addons/interactive/HTMLMesh.js';
 import { InteractiveGroup } from 'three/addons/interactive/InteractiveGroup.js';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 
-// import { floor } from 'mathjs';
+
 
 let appName = 'StepwiseAdaptiveFL';
 let appDescription = 'the premier AR tool for simulating stepwise adaptive Fresnel lenses';
 
-let qAFL = .1;	// the ratio of focal power and the angle between the two components (in radians)
+let pps = 1;	// change in focussing power per shift between the components in the x or y direction
+let p0 = 0;
 let deltaTheta = 10.0*Math.PI/180.0;	// angle by which components are rotated relative to each other (in radians)
 let deltaZ = 0.00001;
 let deltaZMin = 0.00001;
 let deltaX = 0;
 let deltaY = 0;
 let yXR = 1.5;
+let lensType = 0;	// 0 is the default lens, 1 is the Alvarez lens
 let show = 0;	// 0 = both parts, 1 = part 1, 2 = part 2, 3 = equivalent lens, 4 = None
-let windingFocussing = 1;	// 0 = None, 1 = Alvarez, 2 = separation (works for log. spiral only!)
-let RAPC = 0.5;	// in metres; if azimuthalPhaseCorrection = 2, no APC will be applied for R > RAPC + DeltaRAPC/2
-let DeltaRAPC = 0.1;	// in metres; if azimuthalPhaseCorrection = 2, APC will be applied for R < RAPC - DeltaRAPC/2
-let azimuthalPhaseCorrection = 0;	// 0 = Off, 1 = On, 2 = On (for R < RAPC - DeltaRAPC/2; partially for R between RAPC - DeltaRAPC/2 and RAPC + DeltaRAPC/2)
 
 let scene;
 let aspectRatioVideoFeedU = 4.0/3.0;
@@ -83,7 +85,7 @@ let info;	// = document.createElement('div');
 
 let gui;
 let GUIParams;
-let showControl, spiralTypeControl, windingFocussingControl, azimuthalPhaseCorrectionControl, RAPCControl, DeltaRAPCControl, deltaZControl, backgroundControl, autofocusControl, focusDistanceControl;
+let lensControl, showControl, deltaZControl, backgroundControl, autofocusControl, focusDistanceControl;
 // let folderComponents, folderBackground, folderVirtualCamera;
 
 
@@ -300,9 +302,10 @@ function render() {
 // }
 
 function updateUniforms() {
-	let f1 = raytracingSphereShaderMaterial.uniforms.period.value/qAFL;
-	raytracingSphereShaderMaterial.uniforms.f1.value = f1;
-	raytracingSphereShaderMaterial.uniforms.qAFL.value = qAFL;
+	raytracingSphereShaderMaterial.uniforms.pps.value = pps;
+	raytracingSphereShaderMaterial.uniforms.p0.value = p0;
+
+	raytracingSphereShaderMaterial.uniforms.lensType.value = lensType;
 
 	switch(show) {
 	case 1:	// part 1
@@ -337,48 +340,6 @@ function updateUniforms() {
 		raytracingSphereShaderMaterial.uniforms.visible1.value = true;
 		raytracingSphereShaderMaterial.uniforms.visible2.value = true;
 		raytracingSphereShaderMaterial.uniforms.showEquivalentLens.value = false;
-	}
-
-	switch(windingFocussing) {
-	case 0:	// None
-		raytracingSphereShaderMaterial.uniforms.alvarezWindingFocusing.value = false;
-		break;
-	case 2:	// separation
-		raytracingSphereShaderMaterial.uniforms.alvarezWindingFocusing.value = false;
-		if(raytracingSphereShaderMaterial.uniforms.cylindricalLensSpiralType.value === 0) {
-			// the spiral type is logarithmic, which is the only type for which separation-based winding focussing works
-			if(deltaTheta >= 0) {
-				// deltaTheta >= 0, which is the other condition for separation-based winding focussing to work
-				deltaZ = f1*f1/calculateEquivalentLensF();
-				windingFocussingControl.domElement.style.color = "#FFFFFF";
-			} else {
-				// deltaTheta < 0; separation-based winding focussing doesn't work here
-				deltaZ = deltaZMin;
-				windingFocussingControl.domElement.style.color = "#FF0000";
-			}
-			deltaZControl.setValue(deltaZ);
-		} else {
-			windingFocussingControl.domElement.style.color = "#FF0000";
-		}
-		break;		
-	case 1:	// Alvarez
-	default:
-		raytracingSphereShaderMaterial.uniforms.alvarezWindingFocusing.value = true;
-	}
-
-	switch(azimuthalPhaseCorrection) {
-		case 0:	// Off
-			raytracingSphereShaderMaterial.uniforms.azimuthalPhaseCorrection.value = false;
-			break;
-		case 2: // On (for R < RAPC - DeltaRAPC/2; partially for R between RAPC - DeltaRAPC/2 and RAPC + DeltaRAPC/2)
-			raytracingSphereShaderMaterial.uniforms.azimuthalPhaseCorrection.value = true;
-			raytracingSphereShaderMaterial.uniforms.RAPC0.value = RAPC + 0.5*DeltaRAPC;	// RAPC + DeltaRAPC/2
-			raytracingSphereShaderMaterial.uniforms.RAPC1.value = RAPC - 0.5*DeltaRAPC;	// RAPC - DeltaRAPC/2
-			break;
-		case 1:	// On
-		default:
-			raytracingSphereShaderMaterial.uniforms.azimuthalPhaseCorrection.value = true;
-			raytracingSphereShaderMaterial.uniforms.RAPC1.value = Infinity;	// azimuthal phase correction for all radii
 	}
 
 	raytracingSphereShaderMaterial.uniforms.phi1.value = 0;	// -0.5*deltaTheta;
@@ -648,8 +609,9 @@ function addRaytracingSphere() {
 		side: THREE.DoubleSide,
 		// wireframe: true,
 		uniforms: {
-			cylindricalLensSpiralType: { value: 0 },	// 0 = logarithmic, 1 = Archimedean, 2 = hyperbolic r=1/(-b psi)
-			qAFL: {value: 1.0 }, // Diopters per period 
+			lensType: { value: lensType },	// 0 = normal lens, 1 = Alvarez lens
+			pps: {value: pps }, // change in focussing power per shift between the components in the x or y direction; Diopters per metre 
+			p0: {value: p0 },
 			radius: { value: 1.0 },	// radius of the Fresnel lens
 			visible1: { value: true },
 			c1: { value: new THREE.Vector3(0, 0, 0) },	// centre of part 1#
@@ -661,10 +623,6 @@ function addRaytracingSphere() {
 			period: { value: 0.02 },	// winding parameter of the spiral
 			b2pi: { value: 0 },	// b*2 pi; pre-calculated in updateUniforms()
 			nHalf: { value: 0 },	// pre-calculated in updateUniforms()
-			alvarezWindingFocusing: { value: windingFocussing == 1 },
-			azimuthalPhaseCorrection: { value: azimuthalPhaseCorrection != 0 },	// true if azimuthal phase correction is on, false otherwise
-			RAPC0: { value: RAPC + 0.5*DeltaRAPC },	// if azimuthalPhaseCorrection == 2, this is the radius above which the azimuthal phase correction is turned off
-			RAPC1: { value: (azimuthalPhaseCorrection == 2)?RAPC - 0.5*DeltaRAPC:Infinity },
 			showEquivalentLens: { value: false },
 			equivalentLensIdeal: { value: true },
 			equivalentLensPXY: { value: new THREE.Vector2(0, 0) },	// the x and y coordinates of the principal point of the equivalent lens in the xy plane
@@ -708,8 +666,9 @@ function addRaytracingSphere() {
 
 			varying vec3 intersectionPoint;
 			
-			uniform int cylindricalLensSpiralType;	// 0 = logarithmic, 1 = Archimedean, 2 = hyperbolic r=-b/psi
-			uniform float qAFL; // Diopters per period 
+			uniform int lensType;	// 0 = normal lens, 1 = Alvarez lens
+			uniform float pps; // Diopters per metre
+			uniform float p0;
 			uniform float radius;	// radius of the Fresnel lens
 			uniform bool visible1;	// true if component 1 is visible, false otherwise
 			uniform vec3 c1;	// centre of component 1
@@ -721,10 +680,6 @@ function addRaytracingSphere() {
 			uniform float period;	// winding parameter of the spiral
 			uniform float b2pi;	// pre-calculated
 			uniform float nHalf;	// pre-calculated
-			uniform bool alvarezWindingFocusing;
-			uniform bool azimuthalPhaseCorrection;
-			uniform float RAPC0;	// if azimuthalPhaseCorrection == 2, this is the radius above which the azimuthal phase correction is turned off
-			uniform float RAPC1;	// if azimuthalPhaseCorrection == 2, this is the radius below which the azimuthal phase correction is turned on
 			uniform bool showEquivalentLens;
 			uniform bool equivalentLensIdeal;	// true if the equivalent lens is an ideal thin lens, false if it is a lens hologram
 			uniform vec2 equivalentLensPXY;
@@ -829,7 +784,7 @@ function addRaytracingSphere() {
 				return floor(u/uPeriod+0.5);
 			}
 	
-			vec3 crossedLinearPowerLenticularArraysDeflect(vec3 d, vec3 intersectionPoint, vec3 principalPoint00, float dPdI) {
+			vec3 crossedLinearPowerLenticularArraysDeflect(vec3 d, vec3 intersectionPoint, vec3 principalPoint00, float pps) {
 				vec2 r = intersectionPoint.xy - principalPoint00.xy;
 
 				// lenslet index
@@ -839,8 +794,9 @@ function addRaytracingSphere() {
 				);
 
 				// calculate the tangential direction change
-				vec2 localR = r - 0.5*period*lensletIndices;	// a 2D vector from the principal point to the intersection point
-				vec2 delta = -localR*dPdI*lensletIndices;
+				float q0 = -0.5*p0/pps;
+				vec2 localR = r - q0 - 0.5*period*lensletIndices;	// a 2D vector from the principal point to the intersection point
+				vec2 delta = -localR*(p0+pps*period*lensletIndices);
 		
 				// transform the lenslet centre into the xy coordinate system
 				vec2 dxy = d.xy/length(d) + delta;
@@ -856,7 +812,7 @@ function addRaytracingSphere() {
 				inout vec4 b,
 				vec3 centreOfArray, 
 				float radius,
-				float dPdI
+				float pps
 			) {
 				bool isForward;
 				propagateForwardToZPlane(p, d, centreOfArray.z, isForward);
@@ -872,12 +828,71 @@ function addRaytracingSphere() {
 
 						// deflect the light-ray direction accordingly 
 
-						d = crossedLinearPowerLenticularArraysDeflect(d, p, centreOfArray, dPdI);
+						d = crossedLinearPowerLenticularArraysDeflect(d, p, centreOfArray, pps);
 
 						// lower the brightness factor, giving the light a blue tinge
 						b *= vec4(0.9, 0.9, 0.99, 1);
 					} 
 				} // else b *= vec4(0.99, 0.9, 0.9, 1);	// this shouldn't happen -- give the light a red tinge
+			}
+
+			void alComponentDeflect(inout vec3 d, vec2 pixy, float pps) {
+				// normalise d
+				vec3 dN = d/length(d);
+				// transverse components of the outgoing light-ray direction
+				vec2 dxy = dN.xy - 0.5*pps*pixy*pixy;
+	
+				// from the transverse direction, construct a 3D vector by setting the z component such that the length
+				// of the vector is 1
+				d = vec3(dxy, sign(d.z)*sqrt(1.0 - dot(dxy, dxy)));
+			}
+
+			void passThroughALComponent(
+				inout vec3 p, 
+				inout vec3 d, 
+				inout vec4 b,
+				vec3 centreOfComponent, 
+				float radius,
+				float pps	// the focussing power per shift in the x and y directions
+			) {
+				bool isForward;
+				propagateForwardToZPlane(p, d, centreOfComponent.z, isForward);
+
+				if(isForward) {
+					// there is an intersection with the plane of this lens in the ray's forward direction
+
+					// does the intersection point lie within the radius?
+					vec2 pixy = p.xy - centreOfComponent.xy;
+					float r2 = dot(pixy, pixy);
+					if(r2 < radius*radius) {
+						// the intersection point lies inside the radius, so the component does something to the ray
+
+						// deflect the light-ray direction accordingly and make sure that the sign of the z component remains the same
+						alComponentDeflect(d, pixy, pps);
+
+						// lower the brightness factor, giving the light a blue tinge
+						b *= vec4(0.9, 0.9, 0.99, 1);
+					} 
+				
+				}
+			}
+
+			void passThroughComponent(
+				inout vec3 p, 
+				inout vec3 d, 
+				inout vec4 b,
+				int componentNumber	// 1 or 2
+			) {
+				float sign = (componentNumber==1)?1.0:-1.0;
+				switch(lensType) {
+				case 1:	// Alvarez lens
+					passThroughALComponent(p, d, b, (componentNumber==1)?c1:c2, radius, sign*pps);
+					break;
+				case 0:	// normal lens
+				default:
+					passThroughCrossedLinearPowerLenticularArrays(p, d, b, (componentNumber==1)?c1:c2, radius, sign*pps);
+					break;
+		}
 			}
 				
 			// Pass the current ray (start point p, direction d, brightness factor b) through (or around) a lens.
@@ -908,194 +923,6 @@ function addRaytracingSphere() {
 						lensDeflect(d, pixy, pxy, idealLens);
 
 						// lower the brightness factor, giving the light a blue tinge
-						b *= vec4(0.9, 0.9, 0.99, 1);
-					} 
-				}
-			}
-
-			// calculate the number of the winding that corresponds to position (r, phi)
-			float calculateN(float r, float phi) {
-				switch(cylindricalLensSpiralType)
-				{
-				case 1:	// ARCHIMEDEAN
-					// return floor(((r - period*phi)/b2pi) + 0.5);
-					return floor(0.5 + (r - period*phi) / b2pi);
-				case 2:	// hyperbolic
-					return floor(0.5 + (-1.0/(r*period) - phi)/(2.0*PI));
-				case 0:	// LOGARITHMIC
-				default:
-					return floor(((log(r) - period*phi)/b2pi) + 0.5);
-				}
-			}
-
-			// Azimuthal phase correction is fully applied for R < RAPC1, partially for RAPC1 < R < RAPC0, and not applied for R > RAPC0.
-			// Calculate a factor that represents this.
-			// This factor takes the value 1 for R < RAPC1, 0 for R > RAPC0, and which smoothly interpolates for RAPC1 < R < RAPC0.
-			float calculateAPCFactor(float R) {
-				// first check if R < RAPC1
-				if(R < RAPC1) { return 1.0; }
-				// then check if R > RAPC0
-				else if(R > RAPC0) { return 0.0; }
-				// otherwise, interpolate between 1 and 0
-				else 
-					// return (R - RAPC0) / (RAPC1 - RAPC0);
-					return 0.5*(1.0 + cos(PI*(R - RAPC1) / (RAPC0 - RAPC1)));
-			}
-
-			// For the position (x, y), calculate the derivatives of the phase w.r.t. x and y, divided by k, i.e. (d (phase/k) / d x, d (phase/k) / d y).
-			// The spiral is rotated by deltaTheta.
-			// r2 is the square of r, which we need to calculate r and which we have already calculated, so we might
-			// as well pass it.
-			vec2 calculatePhaseGradient(float x, float y, float r2, float f1) {
-				// calculate r and phi, the polar coordinates
-				float r = sqrt(r2);
-				float phi = atan(y, x);	// azimuthal angle, bound to the range [-pi, pi]
-				float n = calculateN(r, phi);	// the number of the winding the position (x, y) is on
-				float psi = phi + n*2.0*PI;	// (unbound) azimuthal angle psi
-
-				float c;	// common factor
-				vec2 v;
-				switch(cylindricalLensSpiralType)
-				{
-				case 1:	// ARCHIMEDEAN
-					c = period*(r-period*psi)/(2.0*f1*r2);
-					v = vec2(
-						c*(-3.0*period*y*psi + r*(y-2.0*x*psi)),
-						c*( 3.0*period*x*psi - r*(x+2.0*y*psi))
-					);
-
-					if(alvarezWindingFocusing) {
-						c = (r-period*psi)*(r-period*psi)/(f1*r2);
-						v += vec2(
-							c*(-r*x - period*y),
-							c*(-r*y + period*x)
-						);
-					}
-
-					if(azimuthalPhaseCorrection) {
-						c = calculateAPCFactor(period*psi) * period*period*period*psi*psi / (2.0*f1*r2);
-						v += vec2(
-							-c*y,
-							+c*x
-						);
-					}
-
-					return v;
-
-					// if(alvarezWindingFocusing) {
-					// 	if(azimuthalPhaseCorrection) {
-					// 		return vec2(
-					// 			-(2.0*r*x + period*(y-2.0*x*psi)) / (2.0*f1),
-					// 			-(2.0*r*y - period*(x+2.0*y*psi)) / (2.0*f1)
-					// 		);
-					// 	} else {
-					// 		c = (r - period*psi) / (2.0*f1*r2);
-					// 		return vec2(
-					// 			-c*(period*r*y + 2.0*r2*x + period*period*y*psi),
-					// 			+c*(period*r*x - 2.0*r2*y + period*period*x*psi)
-					// 		);
-					// 	}
-					// } else {
-					//  	// no Alvarez winding focussing
-					// 	if(azimuthalPhaseCorrection) {
-					// 		c = period / (2.0*f1*r2);
-					// 		return vec2(
-					// 			c*(r2*y - 2.0*r*(r*x+2.0*period*y)*psi + 2.0*period*(r*x+period*y)*psi*psi),
-					// 			c*(-2.0*period*period*x*psi*psi - 2.0*period*r*psi*(2.0*x+y*psi) + r2*(x+2.0*y*psi))
-					// 		);
-					// 	} else {
-					// 		c = (r - period*psi) / (2.0*f1*r2);
-					// 		return vec2(
-					// 			+c*b*(-3.0*period*y*psi + r*(y-2.0*x*psi)),
-					// 			-c*b*(-3.0*period*x*psi + r*(x+2.0*y*psi))
-					// 		);
-					// 	}
-					// }
-				case 2:	// hyperbolic R = 1/(-period psi)
-					c = (period*r*psi + 1.0) / (2.0*period*f1*r2*psi*psi);
-
-					v = vec2(
-						c*( y - period*r*y*psi + 2.0*period*r*x*psi*psi),
- 						c*(-x + period*r*x*psi + 2.0*period*r*y*psi*psi)
-					);
-
-					if(azimuthalPhaseCorrection) {
-						c = calculateAPCFactor(-1.0/(period*psi)) / (2.0*period*f1*r2*psi*psi);
-						v += vec2(
-							-y*c,
-							 x*c
-						);
-					}		
-					
-					return v;
-				
-				case 0:	// LOGARITHMIC
-				default:
-					float R = exp(period*psi);
-					float R2 = R*R;
-					if(alvarezWindingFocusing) {
-						c = 1.0/(6.0*f1*r2*R);
-						v = vec2(
-							c*( 4.0*period*exp(3.0*period*psi)*y + 3.0*exp(2.0*period*psi)*r*(x-period*y) - r*r2*(period*y+3.0*x)),
-							c*(-4.0*period*exp(3.0*period*psi)*x + 3.0*exp(2.0*period*psi)*r*(y+period*x) + r*r2*(period*x-3.0*y))
-						);
-					} else {
-						c = (exp(period*psi)-r)/(f1*r2);
-						v = vec2(
-							c*(r*x+period*exp(period*psi)*y),
-							c*(r*y-period*exp(period*psi)*x)
-						);
-					}
-
-					if(azimuthalPhaseCorrection) {
-						c = calculateAPCFactor(R) * period*R2 / (2.0*f1*r2);
-						v += vec2(
-							-y*c,
-							+x*c
-						);
-					}
-
-					return v;
-
-				}
-			}
-
-			// Pass the current ray (start point p, direction d, brightness factor b) through a spiral lens.
-			// c is the centre (principal/nodal) point of the spiral lens, which is in the plane z = c.z
-			// deltaTheta is the angle (in radians) by which the component is rotated around the z axis
-			void passThroughSpiralLens(
-				inout vec3 p, 
-				inout vec3 d, 
-				inout vec4 b,
-				vec3 c,
-				float deltaTheta,
-				float f1
-			) {
-				bool isForward;
-				propagateForwardToZPlane(p, d, c.z, isForward);
-
-				if(isForward) {
-					// there is an intersection with the plane of this component in the ray's forward direction
-
-					// does the intersection point lie within the radius?
-					vec2 pixy = (p-c).xy;
-					float r2 = dot(pixy, pixy);
-					if(r2 < radius*radius) {
-						// the intersection point lies inside the radius, so the lens does something to the ray
-
-						// normalise d
-						vec3 dN = d/length(d);
-						// calculate the phase gradient, which defines the change in the transverse components
-						vec2 pRotated = rotate(pixy, deltaTheta);
-						vec2 phaseGradient = rotate(calculatePhaseGradient(pRotated.x, pRotated.y, r2, f1), -deltaTheta);
-						// transverse components of the outgoing light-ray direction
-						vec2 dxy = dN.xy + phaseGradient;
-		
-						// from the transverse direction, construct a 3D vector by setting the z component such that the length
-						// of the vector is 1
-						d = vec3(dxy, sign(d.z)*sqrt(1.0 - dot(dxy, dxy)));						
-
-						// lower the brightness factor, giving the light a slightly blue tinge
 						b *= vec4(0.9, 0.9, 0.99, 1);
 					} 
 				}
@@ -1222,8 +1049,8 @@ function addRaytracingSphere() {
 						if(showEquivalentLens) passThroughEquivalentLens(p, d, b, vec3(c1.x, c1.y, 0)); 
 						else {
 							// pass first through component 1, then component 2, then to environment-facing video feed
-							if(visible1) passThroughCrossedLinearPowerLenticularArrays(p, d, b, c1, radius, -qAFL);							
-							if(visible2) passThroughCrossedLinearPowerLenticularArrays(p, d, b, c2, radius, qAFL);
+							if(visible1) passThroughComponent(p, d, b, 1);	// passThroughCrossedLinearPowerLenticularArrays(p, d, b, c1, radius, -qAFL);							
+							if(visible2) passThroughComponent(p, d, b, 2);	// passThroughCrossedLinearPowerLenticularArrays(p, d, b, c2, radius, qAFL);
 						}
 						if(keepVideoFeedForward) 
 							color = getColorOfBackground(p, d, b, backgroundTexture, halfWidthBackground, halfHeightBackground, backgroundColour);
@@ -1234,8 +1061,8 @@ function addRaytracingSphere() {
 						if(showEquivalentLens) passThroughEquivalentLens(p, d, b, vec3(c1.x, c1.y, 0)); 
 						else {
 							// pass first through component 2, then component 1, then to user-facing video feed
-							if(visible2) passThroughCrossedLinearPowerLenticularArrays(p, d, b, c2, radius, qAFL);
-							if(visible1) passThroughCrossedLinearPowerLenticularArrays(p, d, b, c1, radius, -qAFL);							
+							if(visible2) passThroughComponent(p, d, b, 2);	// passThroughCrossedLinearPowerLenticularArrays(p, d, b, c2, radius, qAFL);
+							if(visible1) passThroughComponent(p, d, b, 1);	// passThroughCrossedLinearPowerLenticularArrays(p, d, b, c1, radius, -qAFL);							
 						}
 						if(keepVideoFeedForward) 
 							color = getColorOfBackground(p, d, b, backgroundTexture, halfWidthBackground, halfHeightBackground, backgroundColour);
@@ -1266,6 +1093,10 @@ function createGUI() {
 			show = (show + 1) % 6;
 			showControl.name( 'Component(s): ' + show2String() );
 		},
+		lensType: function() {
+			lensType = (lensType + 1) % 2;
+			lensControl.name( 'Lens type: ' + lensToString() );
+		},
 		// cycleShow: function() {
 		// 	show = (show + 1) % 4;
 		// 	showControl.setValue( show2String() );
@@ -1284,7 +1115,8 @@ function createGUI() {
 		// },
 		'Radius': raytracingSphereShaderMaterial.uniforms.radius.value,	// radius of the Fresnel lens
 		yXR: yXR, 
-		'qDiopterPerPeriod': qAFL,
+		pps: pps,
+		p0: p0,
 		// '<i>f</i><sub>1</sub>': raytracingSphereShaderMaterial.uniforms.f1.value,	// focal length of cylindrical lens 1 (for Arch. spiral at r=1, for hyp. spiral at phi=1)
 		'&Delta;<i>x</i>': deltaX,
 		'&Delta;<i>y</i>': deltaY,
@@ -1351,6 +1183,7 @@ function createGUI() {
 
 	// const folderComponents = gui.addFolder( 'Optical components' );
 	showControl = gui.add( GUIParams, 'show' ).name( 'Component(s): ' + show2String() );
+	lensControl = gui.add( GUIParams, 'lensType' ).name( 'Lens type: ' + lensToString() );
 	// showControl.domElement.addEventListener( 'click', () => {
 	// 	show = (show + 1) % 4;
 	// 	showControl.setValue( show2String() );
@@ -1374,11 +1207,15 @@ function createGUI() {
 		0.1, 
 		0.01 )
 		.name('<i>period</i>').onChange( (period) => {raytracingSphereShaderMaterial.uniforms.period.value = period; } );
-	gui.add( GUIParams, 'qDiopterPerPeriod', -1, 1, 0.01 )
-		.name( '<i>q</i> (diopter / period)' )
-		.onChange( (qDiopterPerPeriod) => {
-			qAFL = qDiopterPerPeriod;
+	gui.add( GUIParams, 'pps', -10, 10, 0.1 )
+		.name( 'd<i>p</i>/d<i>x</i> (diopter / meter)' )
+		.onChange( (dpdx) => {
+			pps = dpdx;
 		} );
+	gui.add( GUIParams, 'p0', -1, 1, 0.1 )
+		.name( '<i>p</i><sub>0</sub> (diopter)' )
+		.onChange( (f) => { p0 = f; } );
+			raytracingSphereShaderMaterial.uniforms.p0.value = p0;
 	// gui.add( GUIParams, '<i>f</i><sub>1</sub>', -1, 
 	// 	1, 
 	// 	0.01 ).onChange( (f1) => { raytracingSphereShaderMaterial.uniforms.f1.value = f1; } );
@@ -1509,20 +1346,10 @@ function show2String() {
 	}
 }
 
-function windingFocussing2String() {
-	switch(windingFocussing) {
-	case 0: return 'None';
-	case 1: return 'Alvarez';
-	case 2: return 'Separation';	// (log spiral &amp; &Delta;&theta; > 0)';
-	default: return 'Undefined';
-	}
-}
-
-function azimuthalPhaseCorrection2String() {
-	switch( azimuthalPhaseCorrection ) {
-		case 0: return 'Off';
-		case 1: return 'On';
-		case 2: return 'Partial';
+function lensToString() {
+	switch(lensType) {
+		case 0: return 'Default';
+		case 1: return 'Alvarez lens';
 		default: return 'Undefined';
 	}
 }
@@ -1615,8 +1442,8 @@ function addXRInteractivity() {
 // return the focussing powers in the x and y meridians of the equivalent lens
 function calculateEquivalentLensPXY() {
 	return new THREE.Vector2(
-		qAFL * deltaX / raytracingSphereShaderMaterial.uniforms.period.value, 
-		qAFL * deltaY / raytracingSphereShaderMaterial.uniforms.period.value
+		pps * deltaX, 
+		pps * deltaY
 	);
 }
 
@@ -2086,7 +1913,7 @@ function getInfoString() {
 		`Rotation angle, &Delta;&theta; = ${(deltaTheta*180.0/Math.PI).toPrecision(4)}&deg;<br>\n` +
 		//'Spiral type = ' + cylindricalLensSpiralType2String() + '<br>\n' +
 		//`Winding parameter, <i>b</i> = ${raytracingSphereShaderMaterial.uniforms.b.value.toPrecision(4)}<br>\n` +	// winding parameter of the spiral
-		`Ratio of focal power to rotation angle, <i>p</i> = ${(qAFL * (Math.PI / 180.0)).toPrecision(4)} diopter/period;<br>\n` +	// ratio of focal power to rotation angle
+		`Ratio of focal power to shift, d<i>p</i>/d<i>x</i> = ${pps.toPrecision(4)} diopter/metre;<br>\n` +	// ratio of focal power to rotation angle
 		// `<i>f</i><sub>1</sub> = ${raytracingSphereShaderMaterial.uniforms.f1.value.toPrecision(4)}<br>\n` +	// focal length of cylindrical lens 1 (for Arch. spiral at r=1, for hyp. spiral at phi=1)
 		`&Delta;<i>x</i> = ${(deltaX)}&deg;<br>\n` +
 		`&Delta;<i>y</i> = ${(deltaY)}&deg;<br>\n` +
